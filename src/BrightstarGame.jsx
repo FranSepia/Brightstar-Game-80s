@@ -190,27 +190,22 @@ function buildBuildingTexture(seed) {
 }
 
 // ─── OBSTACLE THEMES (cambian cada 10 obstáculos): 0 edificios, 1 papeleo, 2 reloj ──
+//
+// El orden es fijo y es parte del diseño, NO un descuido: los primeros 10
+// obstáculos son de Lotería Nacional y van sin jefe, de calentamiento. El
+// ciclo de verdad arranca con la primera tanda de papeles y de ahí se repite:
+//
+//    1-10   Lotería Nacional   (sin jefe, es la entrada)
+//   11-20   burocracia         -> DENI-BOT
+//   21-30   reloj              -> CLOCKTITAN
+//   31-40   Lotería Nacional   -> LA COMPETENCIA
+//   41-50   burocracia         -> DENI-BOT ... y así
+//
+// Cada jefe sale del tema que le toca, así que barajar los temas desarma el
+// ciclo: no lo conviertas en aleatorio.
 
 const THEME_EVERY = 10
 const THEME_COUNT = 3
-
-// Los temas salían siempre en el mismo orden (edificios, papeleo, reloj), así
-// que el primer enemigo de toda partida era siempre DENI-BOT y la segunda
-// siempre CLOCKTITAN. Ahora el orden se sortea al empezar cada partida.
-//
-// La competencia sigue sin poder ser la primera: enemiesForTheme() no la saca
-// en la vuelta 0, y la vuelta 0 son los primeros 30 obstáculos, o sea los tres
-// temas. Caiga donde caiga en el sorteo, los tres rivales juntos aparecen
-// recién a partir del obstáculo 40. Son el encuentro más duro y de entrada
-// sería un salto de dificultad, no una sorpresa.
-function shuffledThemes() {
-  const order = [...Array(THEME_COUNT).keys()]
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[order[i], order[j]] = [order[j], order[i]]
-  }
-  return order
-}
 
 // Pinta en coordenadas "distancia al borde del hueco" (d). Si flip=true la textura
 // queda con la cornisa abajo (edificio de arriba), pero los dibujos siguen derechos.
@@ -1157,7 +1152,6 @@ export default function BrightstarGame() {
     shots: [],
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
-    themeOrder: shuffledThemes(),
     bgX: 0,
   }), [])
 
@@ -1335,7 +1329,7 @@ export default function BrightstarGame() {
         if (s.mode === 'columns' && pipeTimerRef.current >= PIPE_INTERVAL) {
           const np = spawnPipe(s.pipeCount + 1)
           np.n = ++s.pipeCount
-          np.theme = s.themeOrder[Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT]
+          np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
           np.ballColor = Math.floor(Math.random() * BALL_COLORS.length)
           // La bolita muestra el puntaje con el que vas a quedar al agarrarla,
           // no el número de columna: así después de un enemigo sigue la cuenta
