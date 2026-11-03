@@ -208,7 +208,13 @@ export function createEncounter(ids, cycle = 0) {
       // instante no habría forma de leerla. El turno de cada uno es
       // i * intervalo / cantidad, y como volleyEvery() ya estira el intervalo
       // por la cantidad de rivales, eso se reduce a i * volleyMs.
-      fireTimer: i * ENEMY_META[id].volleyMs,
+      //
+      // El arranque lleva un corrimiento al azar: sin él, dos peleas contra el
+      // mismo rival disparaban en los mismos milisegundos exactos y se podían
+      // aprender de memoria. Es chico (±10%) para no romper el turnado.
+      fireTimer: i * ENEMY_META[id].volleyMs + (Math.random() - 0.5) * ENEMY_META[id].volleyMs * 0.2,
+      // Se vuelve a sortear después de cada andanada (ver updateEnemy).
+      volleyJitter: 0,
       charge: 0,
     }
   })
@@ -292,7 +298,10 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   e.fightMs += dt
   e.fireTimer += dt
 
-  const every = volleyEvery(e)
+  // El intervalo lleva una variación que se sortea tras cada andanada, así que
+  // el ritmo de la pelea nunca es el mismo dos veces. Va acotada a ±15% para
+  // que siga siendo un ritmo reconocible y no un goteo errático.
+  const every = volleyEvery(e) + (e.volleyJitter || 0)
 
   // No se empieza una andanada que no llegue a tiempo: el proyectil tiene que
   // alcanzar al jugador antes de que se acabe la pelea. Si no, queda cruzando
@@ -318,6 +327,7 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   if (e.fireTimer >= every && aTiempo) {
     e.fireTimer = 0
     e.charge = 0
+    e.volleyJitter = (Math.random() - 0.5) * volleyEvery(e) * 0.3
     const p = enemyPos(e)
     const n = volleySize(e)
     const launchY = p.y - 30 * sizeK(e)   // a la altura del brazo, no de los pies
@@ -392,7 +402,17 @@ export function updateEnemy(e, dt, targetY, guides = []) {
       chosen.push(free[Math.floor(Math.random() * free.length)])
     }
 
-    chosen.forEach(i => fire(LANE_LO + bandH * (i + 0.5)))
+    // Dentro de su franja, cada tiro se corre un poco al azar en vez de ir
+    // siempre al centro exacto. Sin esto los proyectiles sólo aparecían en 3 o
+    // 5 alturas, siempre las mismas, y la pelea se veía calcada.
+    //
+    // El corrimiento es chico (±30% de la franja) y entra en aimY, así que la
+    // guía lo ve: safeLane() mide el hueco contra el aimY de verdad y las
+    // bolitas siguen marcando un carril despejado.
+    chosen.forEach(i => {
+      const centro = LANE_LO + bandH * (i + 0.5)
+      fire(centro + (Math.random() - 0.5) * bandH * 0.6)
+    })
   }
 
   return { shots, done: e.fightMs >= BOSS_MS }
@@ -437,7 +457,15 @@ export function safeLane(shots, actual) {
 
   const gaps = []
   for (let i = 0; i < CANDIDATES; i++) {
-    const y = LANE_LO + step * i
+    // Cada candidato se corre dentro de su tramo en vez de caer siempre en la
+    // misma altura exacta: así la fila de bolitas no repite las mismas 7
+    // posiciones en todos los encuentros.
+    //
+    // Esto NO afloja la seguridad: el hueco se mide después de correr el
+    // candidato, así que el filtro de SAFE_GAP de más abajo juzga la altura
+    // real a la que va a salir la bolita, no la de la grilla.
+    const corrido = step * (Math.random() - 0.5) * 0.6
+    const y = Math.max(LANE_LO, Math.min(LANE_HI, LANE_LO + step * i + corrido))
     let gap = Infinity
     for (const s of shots) gap = Math.min(gap, Math.abs(s.aimY - y))
     gaps.push({ y, gap })
@@ -465,8 +493,20 @@ export function safeLane(shots, actual) {
 // sigue marcando por dónde pasar, pero se puede volar siguiéndola.
 const GUIDE_STEP = 85
 
+// Dónde arranca la fila de bolitas de un encuentro. Antes era el centro exacto
+// de la franja, siempre: como al empezar todavía no hay proyectiles en el aire,
+// safeLane() devolvía ese mismo valor y la primera bolita de TODOS los
+// encuentros salía clavada en la misma altura. Ahora se sortea.
+//
+// Se deja un margen en los bordes para que la fila no arranque pegada al techo
+// o al suelo, donde casi no hay hacia dónde seguir subiendo o bajando.
+function startLane() {
+  const margen = (LANE_HI - LANE_LO) * 0.2
+  return LANE_LO + margen + Math.random() * (LANE_HI - LANE_LO - margen * 2)
+}
+
 export function spawnGuide(shots, label, color, prevY) {
-  const from = prevY == null ? (LANE_LO + LANE_HI) / 2 : prevY
+  const from = prevY == null ? startLane() : prevY
   const target = safeLane(shots, from)
   const d = target - from
   const y = Math.abs(d) <= GUIDE_STEP ? target : from + Math.sign(d) * GUIDE_STEP
