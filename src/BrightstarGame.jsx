@@ -194,6 +194,24 @@ function buildBuildingTexture(seed) {
 const THEME_EVERY = 10
 const THEME_COUNT = 3
 
+// Los temas salían siempre en el mismo orden (edificios, papeleo, reloj), así
+// que el primer enemigo de toda partida era siempre DENI-BOT y la segunda
+// siempre CLOCKTITAN. Ahora el orden se sortea al empezar cada partida.
+//
+// La competencia sigue sin poder ser la primera: enemiesForTheme() no la saca
+// en la vuelta 0, y la vuelta 0 son los primeros 30 obstáculos, o sea los tres
+// temas. Caiga donde caiga en el sorteo, los tres rivales juntos aparecen
+// recién a partir del obstáculo 40. Son el encuentro más duro y de entrada
+// sería un salto de dificultad, no una sorpresa.
+function shuffledThemes() {
+  const order = [...Array(THEME_COUNT).keys()]
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  return order
+}
+
 // Pinta en coordenadas "distancia al borde del hueco" (d). Si flip=true la textura
 // queda con la cornisa abajo (edificio de arriba), pero los dibujos siguen derechos.
 function makePainter(g, flip) {
@@ -740,20 +758,19 @@ function drawEnemyLabel(ctx, enemies) {
   ctx.restore()
 }
 
-function drawBackground(ctx, clouds, imgs, isNight, bgX) {
+// El cielo es siempre el mismo. Antes, mientras duraban los fuegos
+// artificiales, se oscurecía todo durante 3 segundos y volvía: se veía como un
+// parpadeo raro en medio de la partida, no como un efecto.
+function drawBackground(ctx, clouds, imgs, bgX) {
   const { sky, far, near } = getAssets()
   ctx.imageSmoothingEnabled = false
   ctx.drawImage(sky, 0, 0)
 
-  ctx.save()
-  if (isNight) ctx.globalAlpha = 0.5
   clouds.forEach(c => drawCloudCanvas(ctx, c.x, c.y, c.s))
-  ctx.restore()
 
   // La señal se proyecta sobre las nubes, así que va después de ellas y opaca:
   // con globalAlpha las nubes se transparentaban justo encima de la estrella y
-  // le teñían el centro de rosa. La intensidad ya viene en el propio asset, y
-  // de noche la capa oscura de más abajo la apaga junto con el resto del cielo.
+  // le teñían el centro de rosa. La intensidad ya viene en el propio asset.
   const signal = getStarSignal(imgs.signal)
   if (signal) ctx.drawImage(signal, 0, 0)
 
@@ -766,11 +783,6 @@ function drawBackground(ctx, clouds, imgs, isNight, bgX) {
   layer(far, 0.15)
   layer(near, 0.4)
   ctx.imageSmoothingEnabled = true
-
-  if (isNight) {
-    ctx.fillStyle = 'rgba(0, 0, 30, 0.45)'
-    ctx.fillRect(0, 0, W, GROUND_Y)
-  }
 }
 
 function drawGround(ctx, groundX) {
@@ -1145,6 +1157,7 @@ export default function BrightstarGame() {
     shots: [],
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
+    themeOrder: shuffledThemes(),
     bgX: 0,
   }), [])
 
@@ -1322,7 +1335,7 @@ export default function BrightstarGame() {
         if (s.mode === 'columns' && pipeTimerRef.current >= PIPE_INTERVAL) {
           const np = spawnPipe(s.pipeCount + 1)
           np.n = ++s.pipeCount
-          np.theme = Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT
+          np.theme = s.themeOrder[Math.floor((np.n - 1) / THEME_EVERY) % THEME_COUNT]
           np.ballColor = Math.floor(Math.random() * BALL_COLORS.length)
           // La bolita muestra el puntaje con el que vas a quedar al agarrarla,
           // no el número de columna: así después de un enemigo sigue la cuenta
@@ -1372,7 +1385,17 @@ export default function BrightstarGame() {
             }
           }
 
-          if (s.enemies.every(enemyGone)) {
+          // Las columnas no vuelven mientras quede un proyectil en el aire.
+          // Son más rápidas que los tiros (aceleran con el puntaje, los tiros
+          // no), así que la primera columna alcanza al rezagado y se lo lleva
+          // puesto dentro del hueco: si el carril del tiro coincide con el
+          // hueco, no hay por dónde pasar.
+          //
+          // El corte de andanadas tardías de updateEnemy() ya hace que casi
+          // nunca quede nada, así que en la práctica esto no agrega espera;
+          // está para que el encuentro no pueda terminar en una pantalla
+          // imposible si algún día se tocan las velocidades.
+          if (s.enemies.every(enemyGone) && !s.shots.length) {
             // Sobrevivir a tres paga por los tres.
             s.score += BOSS_REWARD * s.enemies.length
             s.enemies = []
@@ -1575,7 +1598,7 @@ export default function BrightstarGame() {
 
       // ── DRAW ──
       ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0)
-      drawBackground(ctx, s.clouds, imgs, s.fireworksTimer > 0, s.bgX)
+      drawBackground(ctx, s.clouds, imgs, s.bgX)
 
       if (s.particles && s.particles.length > 0) {
         s.particles.forEach(p => {

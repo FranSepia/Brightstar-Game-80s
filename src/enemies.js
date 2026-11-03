@@ -260,6 +260,15 @@ function speedMul(e) {
   return 1 + e.cycle * 0.06
 }
 
+// Cuánto tarda, en ms, un disparo de este rival en llegar hasta el jugador.
+// Se calcula con la misma fórmula con la que después se dispara, así que si se
+// toca la velocidad de los proyectiles esto la sigue solo.
+function shotReachMs(e) {
+  const launchX = e.homeX + 30 * sizeK(e)
+  const speed = SHOTS[ENEMY_META[e.id].shot].speed * speedMul(e) * distanceK(launchX)
+  return (launchX - BIRD_X) / speed * 1000
+}
+
 // Avanza el enemigo. Devuelve { shots, done }: done avisa que terminó la pelea.
 // guides = las bolitas guía que hay en pantalla. El enemigo las necesita para
 // no disparar al carril que marcan.
@@ -284,11 +293,29 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   e.fireTimer += dt
 
   const every = volleyEvery(e)
-  e.charge = e.fireTimer > every - CHARGE_MS
+
+  // No se empieza una andanada que no llegue a tiempo: el proyectil tiene que
+  // alcanzar al jugador antes de que se acabe la pelea. Si no, queda cruzando
+  // la pantalla con los rivales ya yéndose y las columnas a punto de volver.
+  //
+  // No es un detalle estético. Las columnas aceleran con el puntaje (un 8%
+  // más cada 10 puntos) y los proyectiles no, así que pasados los ~100 puntos
+  // la primera columna ALCANZA al tiro rezagado y se lo lleva puesto dentro
+  // del hueco. Cuando el carril del tiro caía justo en el hueco, no había por
+  // dónde pasar: el obstáculo era imposible, no difícil.
+  //
+  // El corte es "que llegue al jugador", no "que salga de pantalla": con la
+  // segunda condición el rival de más a la izquierda, que es el más lento, se
+  // quedaba sin disparar ni una vez en el encuentro.
+  const aTiempo = e.fightMs + shotReachMs(e) <= BOSS_MS
+
+  // La carga es el aviso de que viene la andanada: si no va a haber andanada,
+  // tampoco hay aviso. Si no, el rival se iluminaba y no salía nada.
+  e.charge = aTiempo && e.fireTimer > every - CHARGE_MS
     ? (e.fireTimer - (every - CHARGE_MS)) / CHARGE_MS
     : 0
 
-  if (e.fireTimer >= every) {
+  if (e.fireTimer >= every && aTiempo) {
     e.fireTimer = 0
     e.charge = 0
     const p = enemyPos(e)
