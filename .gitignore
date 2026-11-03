@@ -1,3 +1,10 @@
 node_modules
 dist
 *.code-workspace
+
+# Las claves de Supabase. La anon key es pública por diseño (viaja en el
+# bundle), pero el archivo igual no se sube: cada entorno pone la suya y nadie
+# se tienta con dejar ahí una service_role.
+.env
+.env.*
+!.env.example

@@ -5,12 +5,15 @@ import {
 } from './heroes'
 import {
   MAX_NAME, normalizeName, getScores, topScores, rankOf,
-  submitScore, getPlayerName, setPlayerName,
+  submitScore, getPlayerName, setPlayerName, loadScores,
 } from './leaderboard'
 import {
-  ENEMY_BY_THEME, ENEMY_META, BOSS_REWARD, createEnemy, updateEnemy, startExit,
-  enemyGone, updateShots, shotHits, drawEnemy, drawShots,
+  enemiesForTheme, ENEMY_META, BOSS_REWARD, createEncounter, updateEnemy, startExit,
+  enemyGone, updateShots, shotHits, drawEnemy, drawShots, enemyLabelAlpha, COMPETITORS,
+  GUIDE_EVERY_MS, GUIDE_POINTS, spawnGuide, updateGuides, takeGuides,
 } from './enemies'
+import { playPipeSound } from './sfx'
+import { asset } from './assets'
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const W = 320
@@ -42,21 +45,35 @@ const GIRL_ANCHOR_Y = 0.5024
 // ─── HITBOXES ─────────────────────────────────────────────────────────────────
 // Círculos [dx, dy, r] que siguen la silueta del sprite, relativos al ancla (x, y).
 // Se rotan igual que el sprite. Usa ?debug en la URL para verlos dibujados.
+// Brightstar lleva los suyos acá; los demás salen de heroHitCircles(), que ya
+// resuelve si al héroe le sirve la silueta compartida o tiene una propia.
+// Se recorre HERO_IDS a propósito en vez de escribir el mapa a mano: así, sumar
+// un héroe y olvidarse de su entrada no vuelve a dejar a hitCircles() leyendo
+// undefined, que tiraba una excepción y mataba el bucle de dibujo entero (no
+// solo a ese personaje: se caían también los retratos y el fondo).
 const HIT_CIRCLES = {
-  bird:  [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
-  // Los tres comparten silueta, pero cada uno se dibuja a su escala, así que el
-  // hitbox se ajusta a la suya.
-  scarlet: heroHitCircles('scarlet'),
-  aegis:   heroHitCircles('aegis'),
-  tempest: heroHitCircles('tempest'),
+  bird: [[22, -9, 8], [-2, -17, 6], [8, 6, 10], [-8, 10, 7], [-14, 19, 5]],
+  ...Object.fromEntries(
+    HERO_IDS.filter(id => id !== 'bird').map(id => [id, heroHitCircles(id)])
+  ),
 }
-const TILT = { bird: 0.06, scarlet: 0.06, aegis: 0.06, tempest: 0.06 }
+const TILT = Object.fromEntries(HERO_IDS.map(id => [id, 0.06]))
 const QUERY = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
-const DEBUG = QUERY.has('debug')
+// Los trucos de ?debug existen solo mientras desarrollás. En el sitio
+// publicado esto queda en false fijo y Vite borra todo el código de debug del
+// bundle: si no, cualquiera entrando con ?debug&god jugaba invencible y con
+// ?debug&enemy=... se saltaba directo a los jefes.
+const DEBUG = import.meta.env.DEV && QUERY.has('debug')
 const DEBUG_GOD = DEBUG && QUERY.has('god')         // ?debug&god: sin colisiones
 const DEBUG_SKIP = DEBUG ? Number(QUERY.get('skip')) || 0 : 0  // ?debug&skip=10 salta al tema siguiente
 // ?debug&enemy=denibot | clocktitan: arranca directo en el encuentro con ese enemigo
-const DEBUG_ENEMY = DEBUG && ENEMY_META[QUERY.get('enemy')] ? QUERY.get('enemy') : null
+// ?debug&enemy=<id> para uno solo, o ?debug&enemy=competencia para los tres.
+const DEBUG_ENEMY_IDS = (() => {
+  if (!DEBUG) return null
+  const q = QUERY.get('enemy')
+  if (q === 'competencia') return COMPETITORS
+  return ENEMY_META[q] ? [q] : null
+})()
 // ?debug&hitbox: dibuja los círculos y rectángulos de colisión (los verdes)
 const DEBUG_HITBOX = DEBUG && QUERY.has('hitbox')
 
@@ -449,6 +466,106 @@ function buildSky() {
   return c
 }
 
+// ─── SEÑAL DE LA ESTRELLA ─────────────────────────────────────────────────────
+// Una batiseñal, pero proyectando la estrella del logo en vez del murciélago.
+// El haz nace entre los edificios y sube en diagonal hasta el emblema. Se
+// dibuja antes de las capas de skyline, así los edificios le tapan la base y
+// parece que sale de atrás de ellos y no flotando sobre la ciudad.
+const SIGNAL = { x: 246, y: 104, r: 30 }
+const SIGNAL_BASE = { x: 84, y: GROUND_Y }
+
+// El emblema es el logo recortado tal cual (star_signal.png), no una estrella
+// generada: sus ocho puntas son todas de largo y ancho distintos y el mango
+// sale en diagonal, así que cualquier estrella dibujada por fórmula quedaba
+// parecida pero no igual. Estas medidas son del PNG: dónde cae el centro del
+// aro y cuánto mide su radio exterior, para poder escalarlo a SIGNAL.r.
+const SIGNAL_IMG = { cx: 74, cy: 69.5, r: 69.75 }
+
+function buildStarSignal(emblem) {
+  const c = makeCanvas(W, GROUND_Y)
+  const g = c.getContext('2d')
+  const { x: sx, y: sy, r } = SIGNAL
+
+  // Haz: un cono que se abre desde los edificios hasta el emblema. Arranca
+  // transparente abajo para que no se note dónde nace entre las azoteas.
+  const ang = Math.atan2(sy - SIGNAL_BASE.y, sx - SIGNAL_BASE.x)
+  const nx = Math.cos(ang + Math.PI / 2)
+  const ny = Math.sin(ang + Math.PI / 2)
+  const beam = (halfBase, halfTop, alpha) => {
+    const grad = g.createLinearGradient(SIGNAL_BASE.x, SIGNAL_BASE.y, sx, sy)
+    grad.addColorStop(0, 'rgba(150, 220, 255, 0)')
+    grad.addColorStop(0.5, `rgba(170, 225, 255, ${alpha * 0.5})`)
+    grad.addColorStop(1, `rgba(220, 245, 255, ${alpha})`)
+    g.fillStyle = grad
+    g.beginPath()
+    g.moveTo(SIGNAL_BASE.x + nx * halfBase, SIGNAL_BASE.y + ny * halfBase)
+    g.lineTo(SIGNAL_BASE.x - nx * halfBase, SIGNAL_BASE.y - ny * halfBase)
+    g.lineTo(sx - nx * halfTop, sy - ny * halfTop)
+    g.lineTo(sx + nx * halfTop, sy + ny * halfTop)
+    g.closePath()
+    g.fill()
+  }
+  // Los dos conos superpuestos leen como tres haces: el núcleo brillante y, a
+  // los costados, lo que sobra del cono ancho. El ancho de arriba del cono
+  // exterior es exactamente r, o sea que el haz termina midiendo lo mismo que
+  // la señal: más abierto que eso se veía más grande que el propio emblema.
+  beam(12, r, 0.15)          // cono ancho y tenue
+  beam(3.5, r * 0.33, 0.30)  // núcleo del haz
+
+  // Resplandor del emblema. Se apaga justo en el borde del aro, no más afuera:
+  // desbordado se veía como una mancha redonda alrededor de la señal en vez de
+  // un disco de luz proyectado.
+  const halo = g.createRadialGradient(sx, sy, 0, sx, sy, r)
+  halo.addColorStop(0, 'rgba(200, 240, 255, 0.55)')
+  halo.addColorStop(0.6, 'rgba(150, 205, 255, 0.28)')
+  halo.addColorStop(1, 'rgba(120, 180, 255, 0)')
+  g.fillStyle = halo
+  g.beginPath()
+  g.arc(sx, sy, r, 0, Math.PI * 2)
+  g.fill()
+
+  // Disco del emblema. Va bastante opaco a propósito: con poco relleno las
+  // nubes que pasan por detrás se veían a través y ensuciaban la estrella.
+  g.fillStyle = 'rgba(200, 236, 255, 0.36)'
+  g.beginPath()
+  g.arc(sx, sy, r, 0, Math.PI * 2)
+  g.fill()
+
+  // El logo, escalado para que su aro mida SIGNAL.r y centrado en la señal.
+  const k = r / SIGNAL_IMG.r
+  const ex = sx - SIGNAL_IMG.cx * k
+  const ey = sy - SIGNAL_IMG.cy * k
+  const ew = emblem.width * k
+  const eh = emblem.height * k
+
+  // El brillo del emblema va en una pasada aparte recortada al disco, así el
+  // halo tampoco se escapa del perímetro. Después se dibuja el logo nítido sin
+  // recortar, porque el mango sale del aro y tiene que verse entero.
+  // El desenfoque es corto a propósito: con uno grande el brillo se amontonaba
+  // sobre el borde interno y el aro se veía bastante más grueso que en el logo.
+  g.save()
+  g.beginPath()
+  g.arc(sx, sy, r, 0, Math.PI * 2)
+  g.clip()
+  g.shadowColor = '#9fe4ff'
+  g.shadowBlur = 4
+  g.drawImage(emblem, ex, ey, ew, eh)
+  g.restore()
+
+  g.drawImage(emblem, ex, ey, ew, eh)
+
+  return c
+}
+
+// La señal depende de un PNG que llega por el cargador de imágenes, así que no
+// puede armarse junto al resto de los assets: se arma una sola vez, en el
+// primer cuadro en que el emblema ya está disponible.
+let signalCache = null
+function getStarSignal(emblem) {
+  if (!signalCache && emblem) signalCache = buildStarSignal(emblem)
+  return signalCache
+}
+
 let assetCache = null
 function getAssets() {
   if (assetCache) return assetCache
@@ -585,6 +702,44 @@ function neonText(ctx, text, x, y, size, color, glow, align = 'center') {
   ctx.restore()
 }
 
+// Cartel con el problema que viene: BUROCRACIA, TIEMPO o COMPETENCIA. Cuando
+// pelean varios, la etiqueta es una sola (es el mismo problema) y debajo van
+// los nombres de los rivales, uno por línea. Apilados y no en una fila: los
+// tres seguidos no entran en 320 px sin achicar la letra hasta no leerse.
+// El panel se mide sobre el texto más ancho en vez de usar una medida fija.
+function drawEnemyLabel(ctx, enemies) {
+  const alpha = enemyLabelAlpha(enemies[0])
+  if (alpha <= 0) return
+
+  const meta = ENEMY_META[enemies[0].id]
+  const subs = enemies.map(e => ENEMY_META[e.id].sub).filter(Boolean)
+  const size = 14
+  const subSize = 8
+  const subLine = 12
+
+  ctx.save()
+  ctx.font = `${size}px ${FONT}`
+  let w = ctx.measureText(meta.label).width
+  ctx.font = `${subSize}px ${FONT}`
+  subs.forEach(t => { w = Math.max(w, ctx.measureText(t).width) })
+  ctx.restore()
+
+  w += 36
+  const h = 32 + (subs.length ? subs.length * subLine + 8 : 8)
+  const x = (W - w) / 2
+  const y = 96
+
+  ctx.save()
+  ctx.globalAlpha = alpha
+  drawPanel(ctx, x, y, w, h, 8)
+  neonText(ctx, meta.label, W / 2, y + 25, size, '#ffffff', meta.glow)
+  subs.forEach((t, i) => {
+    neonText(ctx, t, W / 2, y + 41 + i * subLine, subSize, '#ffe44e',
+             ENEMY_META[enemies[i].id].glow)
+  })
+  ctx.restore()
+}
+
 function drawBackground(ctx, clouds, imgs, isNight, bgX) {
   const { sky, far, near } = getAssets()
   ctx.imageSmoothingEnabled = false
@@ -594,6 +749,13 @@ function drawBackground(ctx, clouds, imgs, isNight, bgX) {
   if (isNight) ctx.globalAlpha = 0.5
   clouds.forEach(c => drawCloudCanvas(ctx, c.x, c.y, c.s))
   ctx.restore()
+
+  // La señal se proyecta sobre las nubes, así que va después de ellas y opaca:
+  // con globalAlpha las nubes se transparentaban justo encima de la estrella y
+  // le teñían el centro de rosa. La intensidad ya viene en el propio asset, y
+  // de noche la capa oscura de más abajo la apaga junto con el resto del cielo.
+  const signal = getStarSignal(imgs.signal)
+  if (signal) ctx.drawImage(signal, 0, 0)
 
   const layer = (img, factor) => {
     const off = -((bgX * factor) % W)
@@ -696,10 +858,17 @@ const NAME_BTN = { x: NAME_ROW.x + NAME_ROW.w - 66, y: NAME_ROW.y + 6, w: 54, h:
 const LB_PANEL = { x: 110, y: 170, w: 200, h: 150 }
 const LB_ROWS = 5
 
-const SEL_W = 70
+// La fila de heroes entra siempre en el ancho de pantalla: la casilla se achica
+// sola cuando se suman personajes, hasta el tope de 70 px con el que se dibujo
+// el selector original de cuatro.
 const SEL_H = 58
 const SEL_GAP = 6
 const SEL_Y = 386
+const SEL_MARGIN = 6
+const SEL_W = Math.min(
+  70,
+  Math.floor((W - SEL_MARGIN * 2 - (HERO_IDS.length - 1) * SEL_GAP) / HERO_IDS.length)
+)
 const SEL_X0 = (W - (HERO_IDS.length * SEL_W + (HERO_IDS.length - 1) * SEL_GAP)) / 2
 
 function inRect(r, lx, ly) {
@@ -735,7 +904,7 @@ function drawPortrait(ctx, id, imgs, cx, cy) {
   // El retrato también usa la escala relativa del héroe, para que en el
   // selector se vean del mismo tamaño que se ven jugando.
   const ratio = id === 'bird' ? 1 : heroScale(id) / HERO_BASE_SCALE
-  const s = (58 / src.width) * ratio
+  const s = (SEL_W / src.width) * ratio
   ctx.drawImage(src, cx - src.width * s * anchorX, cy - src.height * s * 0.5, src.width * s, src.height * s)
 }
 
@@ -930,6 +1099,11 @@ export default function FlappyBird() {
     if (!getPlayerName()) setEditingName(true)
   }, [])
 
+  // La tabla de puntajes se trae una vez al abrir. No hace falta avisarle a
+  // React: el ranking se dibuja en el canvas cuadro a cuadro, así que en
+  // cuanto la cache se actualiza aparece solo.
+  useEffect(() => { loadScores() }, [])
+
   const openNameEditor = useCallback(() => {
     setNameDraft(nameRef.current)
     setEditingName(true)
@@ -963,9 +1137,11 @@ export default function FlappyBird() {
     flashTimer: 0,
     deadTimer: 0,
     scoreSent: false,
-    mode: DEBUG_ENEMY ? 'boss' : 'columns',   // 'columns' | 'boss'
+    mode: DEBUG_ENEMY_IDS ? 'boss' : 'columns',   // 'columns' | 'boss'
     bossCycle: 0,
-    enemy: DEBUG_ENEMY ? createEnemy(DEBUG_ENEMY, 0) : null,
+    enemies: DEBUG_ENEMY_IDS ? createEncounter(DEBUG_ENEMY_IDS, 0) : [],
+    guides: [],          // bolitas que marcan el carril seguro durante el encuentro
+    guideTimer: 0,
     shots: [],
     scored: new Set(),
     pipeCount: DEBUG_SKIP,
@@ -1034,13 +1210,19 @@ export default function FlappyBird() {
   // Load images on mount
   useEffect(() => {
     const paths = {
-      bird:      '/assets/retro/girl.png',
-      logo:      '/assets/retro/logo_banner.png',
+      bird:      asset('assets/retro/girl.png'),
+      logo:      asset('assets/retro/logo_banner.png'),
+      signal:    asset('assets/retro/star_signal.png'),
       scarlet:    HERO_META.scarlet.src,
       aegis:      HERO_META.aegis.src,
       tempest:    HERO_META.tempest.src,
+      gtech:      HERO_META.gtech.src,
+      mrmexico:   HERO_META.mrmexico.src,
       denibot:    ENEMY_META.denibot.src,
       clocktitan: ENEMY_META.clocktitan.src,
+      intralot:   ENEMY_META.intralot.src,
+      genlot:     ENEMY_META.genlot.src,
+      scigames:   ENEMY_META.scigames.src,
     }
     const keys = Object.keys(paths)
     keys.forEach(async (k) => {
@@ -1159,16 +1341,45 @@ export default function FlappyBird() {
         s.pipes.forEach(p => { p.x -= speed; updateSlide(p, dt) })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
-        // ── Encuentro con enemigo ──
-        if (s.enemy) {
-          const volley = updateEnemy(s.enemy, dt, s.birdY)
-          s.shots.push(...volley.shots)
-          if (volley.done) startExit(s.enemy)
-          if (enemyGone(s.enemy)) {
-            s.enemy = null
+        // ── Encuentro con enemigos ──
+        if (s.enemies.length) {
+          // Comparten el reloj de la pelea, así que terminan juntos: en cuanto
+          // uno cumple su tiempo se van todos, y no queda uno solo bombardeando
+          // después de que los demás se fueron.
+          let over = false
+          s.enemies.forEach(e => {
+            // Les pasamos las bolitas para que no disparen al carril que
+            // marcan: si no, la guía lleva al jugador justo al proyectil.
+            const volley = updateEnemy(e, dt, s.birdY, s.guides)
+            s.shots.push(...volley.shots)
+            if (volley.done) over = true
+          })
+          if (over) s.enemies.forEach(startExit)
+
+          // Las bolitas guía salen mientras haya pelea, nunca durante la salida:
+          // si no, quedaban cruzando la pantalla con los jefes ya yéndose.
+          if (!over) {
+            s.guideTimer += dt
+            if (s.guideTimer >= GUIDE_EVERY_MS) {
+              s.guideTimer = 0
+              // Lleva el puntaje con el que vas a quedar al agarrarla, igual
+              // que las bolitas de los obstáculos: hay que contar las que ya
+              // están en pantalla sin cobrar, porque van antes que esta.
+              const label = s.score + s.guides.length * GUIDE_POINTS + GUIDE_POINTS
+              const color = Math.floor(Math.random() * BALL_COLORS.length)
+              const prev = s.guides[s.guides.length - 1]
+              s.guides.push(spawnGuide(s.shots, label, color, prev && prev.y))
+            }
+          }
+
+          if (s.enemies.every(enemyGone)) {
+            // Sobrevivir a tres paga por los tres.
+            s.score += BOSS_REWARD * s.enemies.length
+            s.enemies = []
+            s.guides = []
+            s.guideTimer = 0
             s.mode = 'columns'
             s.bossCycle++
-            s.score += BOSS_REWARD
             if (s.score > s.best) {
               s.best = s.score
               localStorage.setItem('fb_best', s.best)
@@ -1177,8 +1388,34 @@ export default function FlappyBird() {
           }
         }
         s.shots = updateShots(s.shots, dt)
+        s.guides = updateGuides(s.guides, dt)
 
         const hc = hitCircles(s.character, BIRD_X, s.birdY, s.birdVel)
+
+        // Bolitas guía: suman mientras dura la pelea, así el puntaje del
+        // encuentro depende de cuánto aguantaste y no solo de si sobreviviste.
+        if (s.guides.length) {
+          const { got, left } = takeGuides(s.guides, hc)
+          s.guides = left
+          for (const g of got) {
+            s.score += GUIDE_POINTS
+            for (let i = 0; i < 8; i++) {
+              const a = Math.random() * Math.PI * 2
+              const v = Math.random() * 1.8 + 0.8
+              s.particles.push({
+                x: g.x, y: g.y,
+                vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+                color: i % 2 ? '#ffe44e' : '#ffffff',
+                life: 0.5,
+              })
+            }
+          }
+          if (got.length && s.score > s.best) {
+            s.best = s.score
+            localStorage.setItem('fb_best', s.best)
+          }
+        }
+
         s.pipes.forEach(p => {
           const ballX = p.x + 5 + PIPE_W / 2
           const ballY = p.topH + p.gap / 2
@@ -1207,10 +1444,14 @@ export default function FlappyBird() {
             }
 
             // Última columna de una tanda con enemigo: arranca el encuentro.
-            const bossId = p.n % THEME_EVERY === 0 ? ENEMY_BY_THEME[p.theme] : null
-            if (bossId && s.mode === 'columns') {
+            // lap = vueltas completas de temas ya jugadas. La competencia sale
+            // recién desde la segunda (obstáculo 40), no en la primera tanda de
+            // edificios, que queda de respiro.
+            const lap = Math.floor((p.n - 1) / (THEME_EVERY * THEME_COUNT))
+            const bossIds = p.n % THEME_EVERY === 0 ? enemiesForTheme(p.theme, lap) : []
+            if (bossIds.length && s.mode === 'columns') {
               s.mode = 'boss'
-              s.enemy = createEnemy(bossId, s.bossCycle)
+              s.enemies = createEncounter(bossIds, s.bossCycle)
               // La siguiente columna ya venía en camino: se va deslizándose en
               // vez de quedar cruzada en medio del encuentro. slideOffsets()
               // mueve también su colisión, así que deja de estorbar.
@@ -1231,9 +1472,7 @@ export default function FlappyBird() {
             s.pipeEnterType = col.type
             s.birdVel = 0
             s.deadTimer = 0
-            try {
-              new Audio('https://www.myinstants.com/media/sounds/mario-pipe-sound.mp3').play()
-            } catch (e) {}
+            playPipeSound()
           } else {
             s.phase = 'dead'
             s.birdVel = JUMP_VEL * 0.4
@@ -1363,12 +1602,17 @@ export default function FlappyBird() {
 
       // Va después del suelo: apoya los pies sobre la grilla en vez de quedar
       // con las piernas tapadas por la banda del piso.
-      if (s.enemy) drawEnemy(ctx, imgs[s.enemy.id], s.enemy)
+      s.enemies.forEach(e => drawEnemy(ctx, imgs[e.id], e))
 
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p)
         if (!p.collected) drawBall(ctx, p.x + 5 + PIPE_W / 2, p.topH + p.gap / 2, p.label, BALL_COLORS[p.ballColor])
       })
+
+      // Las guías son las mismas bolitas de los obstáculos, a propósito: lo que
+      // es redondo y numerado se agarra, y lo que no, mata. Van detrás de los
+      // proyectiles porque primero hay que mirar lo que te mata.
+      s.guides.forEach(g => drawBall(ctx, g.x, g.y, g.label, BALL_COLORS[g.color]))
 
       // Los proyectiles van adelante de los obstáculos, para que se vean bien.
       drawShots(ctx, s.shots)
@@ -1390,6 +1634,11 @@ export default function FlappyBird() {
         ctx.restore()
 
         drawScore(ctx, s.score)
+
+        // El cartel va último: ni los edificios, ni los tiros, ni el personaje
+        // lo tapan. Va acá adentro y no junto al enemigo porque con ?debug&enemy
+        // el enemigo ya existe en la pantalla de inicio, y ahí no tiene sentido.
+        if (s.enemies.length) drawEnemyLabel(ctx, s.enemies)
       }
 
       if (DEBUG_HITBOX) {
@@ -1480,15 +1729,11 @@ export default function FlappyBird() {
               }}
             />
 
-            <div style={{ fontSize: 6, color: '#9b8bc9', margin: '12px 0 14px', lineHeight: 1.7 }}>
-              SIN CONTRASENA<br />MISMO NOMBRE = MISMO JUGADOR
-            </div>
-
             <button
               type="submit"
               disabled={!nameDraft.trim()}
               style={{
-                fontFamily: FONT, fontSize: 10, padding: '8px 18px', color: '#fff',
+                fontFamily: FONT, fontSize: 10, padding: '8px 18px', marginTop: 20, color: '#fff',
                 background: nameDraft.trim() ? '#c04dff' : '#4a3a6a',
                 border: 'none', borderRadius: 4,
                 cursor: nameDraft.trim() ? 'pointer' : 'default',

@@ -1,8 +1,10 @@
 // ─── HÉROES ───────────────────────────────────────────────────────────────────
-// Los tres personajes extra. Son sprites PNG en pose de vuelo, con la estela de
+// Los personajes extra. Son sprites PNG en pose de vuelo, con la estela de
 // energía ya dibujada y el fondo recortado, igual que girl.png (Brightstar).
 
-export const HERO_IDS = ['bird', 'scarlet', 'aegis', 'tempest']
+import { asset } from './assets'
+
+export const HERO_IDS = ['bird', 'scarlet', 'aegis', 'tempest', 'gtech', 'mrmexico']
 
 // Cada sprite trae el cuerpo de un tamaño distinto dentro de la misma imagen de
 // 200x133, así que con una escala común se veían de tamaños diferentes: medido,
@@ -10,12 +12,18 @@ export const HERO_IDS = ['bird', 'scarlet', 'aegis', 'tempest']
 //
 // La escala de cada uno sale de igualar la MASA VISUAL (la media geométrica de
 // ancho por alto del cuerpo) con la de Brightstar, que es 43.9 px. No se iguala
-// la altura sola porque Brightstar vuela en pose compacta y los otros tres en
-// pose más horizontal: emparejar alturas dejaría a los anchos enormes.
+// la altura sola porque Brightstar vuela en pose compacta y la mayoría en pose
+// más horizontal: emparejar alturas dejaría a los anchos enormes.
+//
+// GTECH y Mr.México se ajustaron comparándolos contra los otros cuatro ya
+// dibujados a escala de juego: GTECH es chibi (cabeza grande, cuerpo corto) y
+// con la masa calculada se veía chica, así que va un poco más grande.
 export const HERO_META = {
-  scarlet: { name: 'SCARLET', src: '/assets/retro/scarlet.png', scale: 0.508 },
-  aegis:   { name: 'AEGIS',   src: '/assets/retro/aegis.png',   scale: 0.575 },
-  tempest: { name: 'TEMPEST', src: '/assets/retro/tempest.png', scale: 0.535 },
+  scarlet:  { name: 'SCARLET', src: asset('assets/retro/scarlet.png'),  scale: 0.508 },
+  aegis:    { name: 'AEGIS',   src: asset('assets/retro/aegis.png'),    scale: 0.575 },
+  tempest:  { name: 'TEMPEST', src: asset('assets/retro/tempest.png'),  scale: 0.535 },
+  gtech:    { name: 'GTECH',   src: asset('assets/retro/gtech.png'),    scale: 0.470 },
+  mrmexico: { name: 'MR.MEX',  src: asset('assets/retro/mrmexico.png'), scale: 0.760 },
 }
 
 // Escala con la que se midieron los círculos de colisión de abajo.
@@ -34,6 +42,21 @@ const BASE_HIT_CIRCLES = [
   [-22, 11, 5],   // piernas
 ]
 
+// GTECH no comparte la silueta de arriba: es chibi (cabeza grande, cuerpo
+// corto, piernas recogidas) y vuela más erguida que el resto, así que con los
+// círculos compartidos le quedaban la cabeza y las botas fuera del hitbox.
+// Los suyos se midieron sobre su sprite y se guardan a HERO_BASE_SCALE igual
+// que los de arriba, así que se siguen ajustando solos si cambia su escala.
+const OWN_HIT_CIRCLES = {
+  gtech: [
+    [22, 1, 5],     // puño adelantado
+    [5, -15, 10],   // cabeza
+    [-6, 5, 9],     // torso con la G
+    [-16, 14, 7],   // caderas y pierna de adelante
+    [-29, 17, 6],   // bota de atrás
+  ],
+}
+
 export function heroScale(id) {
   return HERO_META[id] ? HERO_META[id].scale : HERO_BASE_SCALE
 }
@@ -41,7 +64,8 @@ export function heroScale(id) {
 // El hitbox tiene que encoger y crecer junto con el sprite.
 export function heroHitCircles(id) {
   const k = heroScale(id) / HERO_BASE_SCALE
-  return BASE_HIT_CIRCLES.map(([dx, dy, r]) => [dx * k, dy * k, r * k])
+  const base = OWN_HIT_CIRCLES[id] || BASE_HIT_CIRCLES
+  return base.map(([dx, dy, r]) => [dx * k, dy * k, r * k])
 }
 
 export function drawHero(ctx, id, img, x, y, vel) {
