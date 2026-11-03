@@ -10,7 +10,9 @@
 Un juego arcade en canvas (React + Vite) que ya está terminado y probado.
 Vive en su propio repo, separado de la landing.
 
-- **Repo del juego:** esta carpeta (`Pruebas Y&iF/jueguito`)
+- **Repo del juego:** esta carpeta — https://github.com/FranSepia/Brightstar-Game-80s
+  (el clon local vive dentro de la carpeta de la landing, en `jueguito/`, pero
+  son dos repos distintos: la landing lo tiene en su `.gitignore`)
 - **Repo de la landing:** https://github.com/FranSepia/YiF-landingpage
   (clon local en `Y&iF PROYECTS/Duplicado Landing Page Y&iF`)
 - **URL de destino:** https://www.why-and-if.solutions/Brightstar-Game-80s
