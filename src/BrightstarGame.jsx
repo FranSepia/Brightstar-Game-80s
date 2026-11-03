@@ -1076,7 +1076,7 @@ function drawGameOver(ctx, score, best) {
 
 // ─── COMPONENT ────────────────────────────────────────────────────────────────
 
-export default function FlappyBird() {
+export default function BrightstarGame() {
   const canvasRef = useRef(null)
   const stateRef = useRef(null)
   const imgsRef = useRef({})

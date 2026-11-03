@@ -382,7 +382,7 @@ export function updateEnemy(e, dt, targetY, guides = []) {
 export const GUIDE_EVERY_MS = 900
 export const GUIDE_POINTS = 1
 const GUIDE_SPEED = 92
-// Mismo radio que las bolitas de los obstáculos (BALL_R en FlappyBird.jsx):
+// Mismo radio que las bolitas de los obstáculos (BALL_R en BrightstarGame.jsx):
 // son las mismas bolitas, así que la colisión tiene que coincidir con el dibujo.
 const GUIDE_R = 14
 

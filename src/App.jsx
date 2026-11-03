@@ -1,5 +1,5 @@
-import FlappyBird from './FlappyBird.jsx'
+import BrightstarGame from './BrightstarGame.jsx'
 
 export default function App() {
-  return <FlappyBird />
+  return <BrightstarGame />
 }

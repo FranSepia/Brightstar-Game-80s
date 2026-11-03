@@ -46,9 +46,9 @@ Cloudflare Workers sirviendo estáticos:
   desarrollo; Vite los borra del bundle publicado.
 - **Dependencias sin vulnerabilidades** (`npm audit`): 0.
 
-## Lo que falta: dos cosas
+## Decisiones tomadas
 
-### 1. Decidir dónde vive el ranking — PENDIENTE
+### 1. Dónde vive el ranking — RESUELTO: se queda en Supabase
 
 Supabase ya está conectado y probado de punta a punta (lee, escribe, el RLS
 bloquea inserts directos, el servidor valida). Pero **D1 es mejor para este
@@ -67,19 +67,46 @@ semana sin que nadie juegue, y el ranking se congela hasta reactivarlo a mano.
 Migrar es acotado: todo el acceso a datos está en `src/leaderboard.js`, detrás
 de `loadScores()` y `submitScore()`. El resto del juego no se entera.
 
-Si se queda en Supabase, el proyecto es `nmxurvcxkrrszafqqosv` y las
-credenciales van en `.env.local` (no versionado; ver `.env.example`). El SQL de
-la tabla, el RLS y la función de alta están en `supabase/schema.sql`.
+**Se decidió quedarse en Supabase** (noviembre 2026): ya estaba probado de
+punta a punta y el juego es temporal, así que no compensaba migrar. El proyecto
+es `nmxurvcxkrrszafqqosv` y las credenciales van en `.env.local` (no
+versionado; ver `.env.example`). El SQL de la tabla, el RLS y la función de
+alta están en `supabase/schema.sql`.
 
-### 2. Integrar en la landing
+> **El pausado sigue siendo el riesgo.** Supabase pausa el proyecto tras 7 días
+> sin consultas y el ranking se congela hasta reactivarlo a mano desde el
+> panel. Si durante la campaña pasa una semana floja, hay que revisarlo. El
+> juego no se rompe: sin base, cada quien ve su propia tabla local.
+
+Si algún día se migra a D1, todo el acceso a datos está detrás de
+`loadScores()` y `submitScore()` en `src/leaderboard.js`; además habría que
+quitar el origen de Supabase del `connect-src` de la CSP en `vite.config.js`.
+
+### 2. Integrar en la landing — HECHO (noviembre 2026)
+
+Publicado en https://www.why-and-if.solutions/Brightstar-Game-80s
+
+El proceso, por si hay que repetirlo tras un cambio en el juego:
 
 1. Compilar acá (ver abajo) → genera `dist/`.
 2. Copiar el contenido de `dist/` a `site/Brightstar-Game-80s/` en la landing.
-3. Decidir si la página entra al sitemap. **Siendo temporal, lo razonable es
-   dejarla fuera** y que no la indexen: si se borra en unas semanas, no
-   conviene que quede en buscadores. Vale revisar `robots.txt` y `_work/build.py`.
-4. Correr `python _work/build.py` en la landing.
-5. Commit y deploy.
+3. Correr `python _work/build.py` en la landing.
+4. Commit y deploy.
+
+**No entra al sitemap y no se indexa**, por ser temporal: si se borra en unas
+semanas, no conviene que queden resultados rotos en Google. Se llega solo con
+el enlace. Se hace con `X-Robots-Tag: noindex, nofollow` en `site/_headers` más
+un `<meta name="robots">` que inyecta `vite.config.js` en el build. A
+propósito **no** se agregó un `Disallow` en `robots.txt`: un `Disallow` impide
+que el buscador lea la página, y entonces nunca ve el `noindex` — la URL puede
+seguir apareciendo en los resultados si alguien la enlaza.
+
+La URL sin barra final (`/Brightstar-Game-80s`) responde con un 301 a
+`/Brightstar-Game-80s/`, que es donde el enrutador de assets sirve el
+`index.html` de la carpeta. Las dos funcionan; se dejó así para que haya una
+sola copia del HTML y no se desincronice al recompilar.
+
+**No se puso ningún enlace al juego desde la landing**: se comparte por URL.
 
 ## Compilar
 
@@ -94,14 +121,21 @@ node node_modules/vite/bin/vite.js preview       # sirve dist/ en la subcarpeta
 
 ## Cómo quitarlo cuando se termine la campaña
 
-Hecho así, retirarlo es:
+Son cuatro cosas, todas en el repo de la landing. Están marcadas con el nombre
+`Brightstar-Game-80s`, así que un `grep -ri brightstar` las encuentra todas.
 
-1. Borrar `site/Brightstar-Game-80s/` de la landing.
-2. Quitar el enlace al juego de donde se haya puesto.
-3. Correr `python _work/build.py` y desplegar.
-4. Si se usó D1: borrar la tabla del ranking. Si se usó Supabase: pausar o
-   borrar el proyecto.
+1. Borrar la carpeta `site/Brightstar-Game-80s/`.
+2. En `site/_headers`, borrar el bloque "Brightstar Game 80s" (las dos reglas
+   de `X-Robots-Tag` y la de `Cache-Control`).
+3. En `wrangler.jsonc`, quitar `"!/Brightstar-Game-80s/assets/*"` de
+   `run_worker_first` y dejarlo en `["/*", "!/assets/*"]`.
+4. Correr `python _work/build.py` y desplegar.
 
-No hace falta tocar `worker/index.js` ni `_headers` salvo que se haya agregado
-algo específico para el juego. **Si en la integración hiciera falta tocarlos,
-dejarlo anotado acá** para que el retiro no se olvide de deshacerlo.
+Después, en Supabase: pausar o borrar el proyecto `nmxurvcxkrrszafqqosv`.
+
+No hay enlace al juego en ninguna página de la landing, así que no hay nada
+más que quitar. `worker/index.js`, `robots.txt` y `sitemap.xml` no se tocaron.
+
+> Lo de `run_worker_first` es solo rendimiento: sin esa excepción cada sprite
+> del juego gasta una invocación del Worker en vez de salir directo del
+> enrutador de assets. Dejarla puesta de más no rompe nada, pero sobra.

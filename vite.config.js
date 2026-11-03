@@ -47,6 +47,12 @@ function securityHeaders(supabaseUrl) {
           { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: buildCSP(supabaseUrl) }, injectTo: 'head-prepend' },
           // Que no se filtre la URL del juego a Google al pedir la tipografía.
           { tag: 'meta', attrs: { name: 'referrer', content: 'no-referrer' }, injectTo: 'head-prepend' },
+          // El juego es una pieza de campaña temporal: se llega por el enlace,
+          // no por una búsqueda. Si se indexara, al retirarlo quedarían
+          // resultados rotos en Google durante semanas. La landing refuerza
+          // esto con X-Robots-Tag en site/_headers; el meta va igual por si
+          // algún día el build se sirve desde otro lado.
+          { tag: 'meta', attrs: { name: 'robots', content: 'noindex, nofollow' }, injectTo: 'head-prepend' },
         ],
       }
     },

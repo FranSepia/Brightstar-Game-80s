@@ -8,3 +8,9 @@ dist
 .env
 .env.*
 !.env.example
+
+# Arte que el juego no usa, apartado acá para que no se publique ni se
+# versione. Lo que tenga prefijo BORRAR- es material de terceros que quedó del
+# arranque del proyecto: no se usa en ninguna parte y hay que borrarlo del
+# disco, no solo dejarlo fuera del repo.
+arte-sin-usar/
