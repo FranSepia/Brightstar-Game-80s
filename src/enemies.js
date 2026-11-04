@@ -308,9 +308,9 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   // la pantalla con los rivales ya yéndose y las columnas a punto de volver.
   //
   // No es un detalle estético. Las columnas aceleran con el puntaje (un 8%
-  // más cada 10 puntos) y los proyectiles no, así que pasados los ~100 puntos
-  // la primera columna ALCANZA al tiro rezagado y se lo lleva puesto dentro
-  // del hueco. Cuando el carril del tiro caía justo en el hueco, no había por
+  // más cada 10 puntos, hasta el techo del punto 100) y los proyectiles no,
+  // así que pasados los ~100 puntos la primera columna ALCANZA al tiro
+  // rezagado y se lo lleva puesto dentro del hueco. Cuando el carril del tiro caía justo en el hueco, no había por
   // dónde pasar: el obstáculo era imposible, no difícil.
   //
   // El corte es "que llegue al jugador", no "que salga de pantalla": con la

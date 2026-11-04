@@ -31,6 +31,20 @@ const GAP_EASY = 256     // obstáculos 11-20
 const EASY_COUNT = 10     // cada tramo dura 10 obstáculos
 const PIPE_INTERVAL = 1500
 
+// ─── TECHO DE DIFICULTAD ──────────────────────────────────────────────────────
+// Pasado este puntaje el juego deja de subir: las columnas no aceleran más y
+// los jefes no suben de ciclo (misma andanada, mismo ritmo y misma velocidad
+// de proyectil que tenían al llegar acá).
+//
+// La velocidad crece un 8% cada 10 puntos y no tenía tope, así que para el 200
+// el mundo venía al doble que en el 100 y al triple en el 300: el hueco pasaba
+// por el jugador antes de que terminara el salto, y aguantar dejaba de ser
+// difícil para ser una lotería. Congelado en el 100 el juego corre a
+// PIPE_SPEED * 1.8 (4.5 px por cuadro) para siempre, que es rápido pero
+// legible: de acá en adelante lo que se mide es la resistencia, no el reflejo.
+const DIFFICULTY_CAP_SCORE = 100
+const SPEED_STEP_MAX = DIFFICULTY_CAP_SCORE / 10   // 10 escalones de 8%
+
 const BIRD_X = 72
 const BIRD_R = 17
 
@@ -1311,7 +1325,8 @@ export default function BrightstarGame() {
 
       const s = stateRef.current
       const imgs = imgsRef.current
-      const speed = PIPE_SPEED * (1 + Math.floor(s.score / 10) * 0.08)
+      const steps = Math.min(Math.floor(s.score / 10), SPEED_STEP_MAX)
+      const speed = PIPE_SPEED * (1 + steps * 0.08)
 
       const renderChar = (c, x, y, vel) => (
         s.character === 'bird'
@@ -1391,12 +1406,17 @@ export default function BrightstarGame() {
           // imposible si algún día se tocan las velocidades.
           if (s.enemies.every(enemyGone) && !s.shots.length) {
             // Sobrevivir a tres paga por los tres.
+            const scoreAntes = s.score
             s.score += BOSS_REWARD * s.enemies.length
             s.enemies = []
             s.guides = []
             s.guideTimer = 0
             s.mode = 'columns'
-            s.bossCycle++
+            // El ciclo es lo que sube la dificultad del encuentro (tamaño de
+            // andanada, ritmo y velocidad de los tiros). Pasado el techo deja
+            // de contar: todos los encuentros siguientes salen clavados en el
+            // ciclo con el que llegaste al 100.
+            if (scoreAntes < DIFFICULTY_CAP_SCORE) s.bossCycle++
             if (s.score > s.best) {
               s.best = s.score
               localStorage.setItem('fb_best', s.best)
