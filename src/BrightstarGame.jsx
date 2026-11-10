@@ -24,6 +24,39 @@ const GROUND_Y = H - GROUND_H
 const GRAVITY = 0.5
 const JUMP_VEL = -9
 const PIPE_SPEED = 2.5
+
+// ─── UN SOLO RELOJ ────────────────────────────────────────────────────────────
+// GRAVITY, JUMP_VEL y PIPE_SPEED están tomadas en píxeles POR CUADRO con la
+// pantalla a 60 fps, que es donde se afinó el juego. El problema es que el
+// bucle corre a los cuadros que da el aparato, no a 60 fijos, y las columnas
+// aparecían por tiempo real (cada PIPE_INTERVAL ms) mientras se movían por
+// cuadro. Las dos cuentas no se hablaban:
+//
+//   60 fps  -> 150 px/s, una columna cada 225 px (lo afinado)
+//   30 fps  ->  75 px/s, una columna cada 117 px (casi pegadas, y en cámara lenta)
+//   120 fps -> 300 px/s, una columna cada 450 px (al doble de velocidad)
+//
+// Un teléfono en modo de bajo consumo dibuja a 30 fps y el juego se volvía
+// injugable; uno de 120 Hz lo jugaba al doble. Como el ranking es compartido,
+// encima no todos jugaban al mismo juego.
+//
+// k = cuántos cuadros de 60 fps pasaron desde el anterior. Multiplicando por
+// él todo lo que se mueve, las medidas siguen siendo las mismas (un salto son
+// 9 px de cuadro a 60 fps, como siempre) pero el avance va por tiempo real, y
+// la separación entre columnas queda clavada en 225 px a cualquier cantidad de
+// cuadros por segundo.
+//
+// Las velocidades se guardan en px por cuadro a 60 fps a propósito, en vez de
+// pasarlas a px/s: así JUMP_VEL, el tope de inclinación del sprite (±5) y el
+// resto de los números afinados siguen queriendo decir lo mismo.
+const FRAME_MS = 1000 / 60
+
+// Esperas que antes se contaban en cuadros y ahora en milisegundos, para que
+// duren igual en todos los aparatos. Son los mismos valores de antes leídos a
+// 60 fps: 60 cuadros = 1000 ms y 30 cuadros = 500 ms.
+const PIPE_ENTER_MS = 1000      // cuánto dura la caída por el caño
+const RESTART_LOCK_MS = 1000    // hasta acá el toque no reinicia la partida
+const GAMEOVER_DELAY_MS = 500   // cuándo aparece el cartel de fin
 const PIPE_W = 52
 const PIPE_GAP = 206
 const GAP_EASIEST = 290  // obstáculos 1-10
@@ -1221,7 +1254,7 @@ export default function BrightstarGame() {
     if (s.phase === 'playing') {
       s.birdVel = JUMP_VEL
     }
-    if (s.phase === 'dead' && s.deadTimer > 60) {
+    if (s.phase === 'dead' && s.deadTimer > RESTART_LOCK_MS) {
       const best = s.best
       stateRef.current = initState()
       stateRef.current.best = best
@@ -1320,8 +1353,14 @@ export default function BrightstarGame() {
 
     const loop = (timestamp) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp
+      // El tope de 32 ms es el freno de mano de siempre: si la pestaña estuvo
+      // dormida o el aparato se clavó, el juego no da un salto gigante de una
+      // vez. Por debajo de ~31 fps eso hace que todo vaya en cámara lenta,
+      // pero parejo: las columnas también aparecen más lento, así que la
+      // separación entre ellas no cambia y se sigue pudiendo jugar.
       const dt = Math.min(timestamp - lastTimeRef.current, 32)
       lastTimeRef.current = timestamp
+      const k = dt / FRAME_MS
 
       const s = stateRef.current
       const imgs = imgsRef.current
@@ -1336,8 +1375,8 @@ export default function BrightstarGame() {
 
       // ── UPDATE ──
       if (s.phase === 'playing') {
-        s.birdVel += GRAVITY
-        s.birdY += s.birdVel
+        s.birdVel += GRAVITY * k
+        s.birdY += s.birdVel * k
 
         // Durante un encuentro no salen columnas: las que quedan se van solas.
         if (s.mode === 'columns') pipeTimerRef.current += dt
@@ -1360,7 +1399,7 @@ export default function BrightstarGame() {
           s.pipes.push(np)
           pipeTimerRef.current = 0
         }
-        s.pipes.forEach(p => { p.x -= speed; updateSlide(p, dt) })
+        s.pipes.forEach(p => { p.x -= speed * k; updateSlide(p, dt) })
         s.pipes = s.pipes.filter(p => p.x > -80)
 
         // ── Encuentro con enemigos ──
@@ -1524,14 +1563,14 @@ export default function BrightstarGame() {
       }
 
       if (s.phase === 'pipe_enter') {
-        s.deadTimer++
+        s.deadTimer += dt
         // Disminuimos la velocidad (1 en lugar de 2) para que sea 50% más lenta
         if (s.pipeEnterType === 'enter_bottom') {
-          s.birdY += 1
+          s.birdY += 1 * k
         } else {
-          s.birdY -= 1
+          s.birdY -= 1 * k
         }
-        if (s.deadTimer > 60) {
+        if (s.deadTimer > PIPE_ENTER_MS) {
           s.phase = 'dead'
           s.deadTimer = 0
           s.birdVel = 0
@@ -1540,21 +1579,21 @@ export default function BrightstarGame() {
       }
 
       if (s.phase === 'dead') {
-        s.deadTimer++
+        s.deadTimer += dt
         // El puntaje entra a la tabla una sola vez, al morir.
         if (!s.scoreSent) {
           s.scoreSent = true
           submitScore(nameRef.current, s.score)
         }
         if (!s.isHidden) {
-          s.birdVel += GRAVITY
-          s.birdY = Math.min(s.birdY + s.birdVel, H - 24)
+          s.birdVel += GRAVITY * k
+          s.birdY = Math.min(s.birdY + s.birdVel * k, H - 24)
         }
       }
 
       if (s.phase !== 'dead' && s.phase !== 'pipe_enter') {
-        s.groundX = (s.groundX - speed) % 64
-        s.bgX += speed
+        s.groundX = (s.groundX - speed * k) % 64
+        s.bgX += speed * k
       }
 
       if (s.phase === 'playing' || s.phase === 'pipe_enter') {
@@ -1563,7 +1602,7 @@ export default function BrightstarGame() {
         }
         if (s.fireworksTimer > 0) {
           s.fireworksTimer -= dt
-          if (Math.random() < 0.08) {
+          if (Math.random() < 0.08 * k) {
             const cx = Math.random() * W
             const cy = Math.random() * (GROUND_Y - 100) + 20
             const colors = ['#ff0044', '#00ff44', '#0044ff', '#ffff00', '#ff00ff', '#00ffff']
@@ -1584,9 +1623,9 @@ export default function BrightstarGame() {
         }
         if (s.particles && s.particles.length > 0) {
           s.particles.forEach(p => {
-            p.x += p.vx
-            p.y += p.vy
-            p.vy += GRAVITY * 0.1
+            p.x += p.vx * k
+            p.y += p.vy * k
+            p.vy += GRAVITY * 0.1 * k
             p.life -= dt * 0.001
           })
           s.particles = s.particles.filter(p => p.life > 0)
@@ -1595,7 +1634,7 @@ export default function BrightstarGame() {
 
       if (s.phase === 'playing') {
         s.clouds.forEach(c => {
-          c.x -= 0.5
+          c.x -= 0.5 * k
           if (c.x < -80) c.x = W + 80
         })
       }
@@ -1698,7 +1737,7 @@ export default function BrightstarGame() {
         })
       }
 
-      if (s.phase === 'dead' && s.deadTimer > 30) {
+      if (s.phase === 'dead' && s.deadTimer > GAMEOVER_DELAY_MS) {
         drawGameOver(ctx, s.score, s.best)
       }
 
