@@ -10,6 +10,7 @@ import {
 import {
   enemiesForTheme, ENEMY_META, BOSS_REWARD, createEncounter, updateEnemy, startExit,
   enemyGone, updateShots, shotHits, drawEnemy, drawShots, enemyLabelAlpha, COMPETITORS,
+  enemySign,
   GUIDE_EVERY_MS, GUIDE_POINTS, spawnGuide, updateGuides, takeGuides,
 } from './enemies'
 import { playPipeSound } from './sfx'
@@ -793,11 +794,79 @@ function drawEnemyLabel(ctx, enemies) {
   ctx.globalAlpha = alpha
   drawPanel(ctx, x, y, w, h, 8)
   neonText(ctx, meta.label, W / 2, y + 25, size, '#ffffff', meta.glow)
+  // Cada nombre va en el color de su dueño, no todos en el mismo amarillo: es
+  // la única pista de qué bicho es cuál antes de que empiecen a disparar.
   subs.forEach((t, i) => {
-    neonText(ctx, t, W / 2, y + 41 + i * subLine, subSize, '#ffe44e',
-             ENEMY_META[enemies[i].id].glow)
+    const m = ENEMY_META[enemies[i].id]
+    neonText(ctx, t, W / 2, y + 41 + i * subLine, subSize, m.ink || '#ffe44e', m.glow)
   })
   ctx.restore()
+}
+
+// Letrero de neón con el nombre de un rival, apoyado en el suelo debajo de él.
+// Está copiado de los carteles que ya trae el arte de los sprites: chapa
+// oscura, borde del color del bicho y las letras del mismo color encendidas.
+//
+// Lleva su propio dibujo en vez de usar drawPanel() porque aquel tiene el
+// marco doble y el violeta fijos de los paneles de la interfaz; acá el marco
+// es de un solo trazo y del color de cada uno.
+function drawSignPlate(ctx, x, y, w, h, color) {
+  const r = 4
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.lineTo(x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.lineTo(x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.lineTo(x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.closePath()
+  ctx.fillStyle = 'rgba(10, 7, 32, 0.92)'
+  ctx.fill()
+  ctx.shadowColor = color
+  ctx.shadowBlur = 6
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.restore()
+}
+
+// Los carteles de los tres rivales. El texto no pasa por neonText(): con una
+// letra de 6 px su contorno oscuro (3 px de grosor mínimo) la empasta hasta no
+// leerse. Acá el realce es solo el resplandor del propio color.
+function drawEnemySigns(ctx, enemies) {
+  enemies.forEach(e => {
+    const sign = enemySign(e)
+    if (!sign || sign.alpha <= 0) return
+
+    const size = 6
+    const h = 13
+    ctx.save()
+    ctx.font = `${size}px ${FONT}`
+    const w = Math.ceil(ctx.measureText(sign.text).width) + 12
+    ctx.restore()
+
+    // El sitio donde queda parado va centrado bajo su dueño, pero recortado
+    // contra los bordes: SCIENTIFIC GAMES mide casi 100 px y le toca el rival
+    // más pegado al borde derecho. El corrimiento de la entrada y la salida se
+    // suma DESPUÉS del recorte, así el cartel viaja con el rival en vez de
+    // quedarse clavado en el borde mientras él todavía viene llegando.
+    const restX = Math.max(3, Math.min(W - w - 3, sign.homeX - w / 2))
+    const x = restX + sign.offset
+
+    ctx.save()
+    ctx.globalAlpha = sign.alpha
+    drawSignPlate(ctx, x, sign.y, w, h, sign.color)
+    ctx.font = `${size}px ${FONT}`
+    ctx.textAlign = 'center'
+    ctx.shadowColor = sign.color
+    ctx.shadowBlur = 5
+    ctx.fillStyle = sign.color
+    ctx.fillText(sign.text, x + w / 2, sign.y + 9)
+    ctx.restore()
+  })
 }
 
 // El cielo es siempre el mismo. Antes, mientras duraban los fuegos
@@ -1679,6 +1748,9 @@ export default function BrightstarGame() {
       // Va después del suelo: apoya los pies sobre la grilla en vez de quedar
       // con las piernas tapadas por la banda del piso.
       s.enemies.forEach(e => drawEnemy(ctx, imgs[e.id], e))
+      // Después de los rivales: los carteles van apoyados en el suelo, delante
+      // de la grilla y por debajo de los pies de cada uno.
+      drawEnemySigns(ctx, s.enemies)
 
       s.pipes.forEach(p => {
         drawBuilding(ctx, imgs, p)

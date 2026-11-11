@@ -68,6 +68,13 @@ export const ENEMY_META = {
 
   // La competencia comparte etiqueta ('COMPETENCIA') y se distingue por `sub`,
   // que es el nombre que sale en la segunda línea del cartel.
+  //
+  // `ink` es el color con el que se escribe ese nombre, y también el del
+  // cartel que queda bajo sus pies: el de cada uno, no un amarillo igual para
+  // los tres. Los tonos salen de medir los PNG, no de ojo: el rojo del cuerpo
+  // de INTRALOT es #f70404, el verde de SCIENTIFIC GAMES anda entre #aaff1f y
+  // #22fd01 (el resplandor #6cff4a cae justo en el medio) y el azul de GELLOT
+  // GENLOT es #0054fd en 4890 px, de lejos su color dominante.
   intralot: {
     name: 'INTRALOT',
     label: 'COMPETENCIA',
@@ -76,6 +83,7 @@ export const ENEMY_META = {
     shot: 'iorb',
     volleyMs: 2000,
     glow: '#ff3b3b',
+    ink: '#ff3b3b',
     jet: ['#ff4b2b', '#ffb37a'],
     footDy: 84,
     legs: [{ dx: -36, w: 40 }, { dx: 33, w: 31 }],
@@ -90,6 +98,9 @@ export const ENEMY_META = {
     shot: 'loto',
     volleyMs: 1850,
     glow: '#2fe8e0',
+    // El azul del bicho, no el celeste del resplandor: el cuerpo es #0054fd,
+    // que sobre el panel oscuro no se lee, así que va el mismo tono aclarado.
+    ink: '#5990ff',
     jet: ['#1ba8c8', '#9ff4ff'],
     footDy: 84,
     legs: [{ dx: -50, w: 24 }, { dx: -9, w: 22 }, { dx: 48, w: 24 }],
@@ -102,6 +113,7 @@ export const ENEMY_META = {
     shot: 'atom',
     volleyMs: 2150,
     glow: '#6cff4a',
+    ink: '#6cff4a',
     jet: ['#3fbf2a', '#d3ff9a'],
     footDy: 84,
     legs: [{ dx: -10, w: 28 }, { dx: 39, w: 21 }],
@@ -134,6 +146,13 @@ const HOME_X = 240          // bien a la derecha: deja pista para ver venir el t
 // 460, 474, 496, 528 y 568; la segunda desde abajo es 496.
 const FOOT_Y = 496
 const SLIDE_MS = 850
+
+// Entran de a uno y no los tres de golpe: cada rival espera su turno fuera de
+// pantalla. 420 ms es menos que lo que dura el deslizamiento (SLIDE_MS), así
+// que se superponen en el aire y leen como una fila que avanza, no como tres
+// apariciones sueltas. El último queda plantado a los 420*2 + 850 = 1690 ms,
+// todavía con el cartel de arriba en pantalla (empieza a apagarse a los 1600).
+const ENTER_STAGGER_MS = 420
 const CHARGE_MS = 520       // aviso antes de cada andanada
 
 // Proyectiles grandes y lentos: se esquivan leyendo la trayectoria, no de reflejo.
@@ -203,6 +222,12 @@ export function createEncounter(ids, cycle = 0) {
       t: 0,
       phase: 'in',
       slide: 1,
+      // Puesto en la fila: ordena tanto el turno de entrada como el renglón
+      // del cartel que queda abajo (ver enemySign).
+      slot: i,
+      // Su turno para entrar. Se mide contra e.t, que cuenta desde que se armó
+      // el encuentro, así que no hace falta llevar otro contador.
+      enterDelay: i * ENTER_STAGGER_MS,
       fightMs: 0,
       // Disparan por turnos: si los tres soltaran la andanada en el mismo
       // instante no habría forma de leerla. El turno de cada uno es
@@ -218,6 +243,42 @@ export function createEncounter(ids, cycle = 0) {
       charge: 0,
     }
   })
+}
+
+// ─── EL CARTEL DE CADA RIVAL ─────────────────────────────────────────────────
+// Un letrero de neón con su nombre, apoyado en el suelo debajo de él, que se
+// queda mientras dure el encuentro.
+//
+// Van en renglones distintos a propósito. Los tres están plantados en x=176,
+// 242 y 290, o sea a 66 y 48 px uno de otro, y 'SCIENTIFIC GAMES' mide por sí
+// solo casi 100 px: puestos todos a la misma altura se taparían entre ellos.
+// Escalonados, cada uno queda bajo su dueño y se leen los tres.
+const SIGN_Y = FOOT_Y + 12
+const SIGN_ROW_H = 15
+
+// Devuelve dónde y cómo va el cartel, o null si este rival no lleva (los jefes
+// solos no: su nombre ya está en el cartel grande de arriba).
+//
+// Viaja con el rival en vez de quedar clavado en su sitio: entra deslizándose
+// con él y se va con él, que es lo que pide el encargo: que el cartel se quede
+// hasta que los personajes se vayan.
+//
+// Por eso devuelve el sitio donde va parado (homeX) y aparte lo que el rival
+// lleva corrido (offset), en vez de una sola x ya sumada. Quien dibuja tiene
+// que recortar la posición final contra los bordes de la pantalla, y si se
+// recortara la x de un rival que todavía viene entrando, su cartel se quedaba
+// pegado al borde derecho, encendido y solo, antes de que llegara su dueño.
+export function enemySign(e) {
+  const meta = ENEMY_META[e.id]
+  if (!meta.sub) return null
+  return {
+    text: meta.sub,
+    color: meta.ink || meta.glow,
+    homeX: e.homeX,
+    offset: enemyPos(e).x - e.homeX,
+    y: SIGN_Y + (e.slot || 0) * SIGN_ROW_H,
+    alpha: Math.max(0, 1 - e.slide),
+  }
 }
 
 // Cuánto hay que encoger las medidas de ENEMY_META (footDy, legs), que están
@@ -284,6 +345,8 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   const meta = ENEMY_META[e.id]
 
   if (e.phase === 'in') {
+    // Todavía no es su turno: espera fuera de pantalla (slide sigue en 1).
+    if (e.t < e.enterDelay) return { shots, done: false }
     e.slide = Math.max(0, e.slide - dt / SLIDE_MS)
     if (e.slide === 0) e.phase = 'fight'
     return { shots, done: false }
@@ -316,7 +379,11 @@ export function updateEnemy(e, dt, targetY, guides = []) {
   // El corte es "que llegue al jugador", no "que salga de pantalla": con la
   // segunda condición el rival de más a la izquierda, que es el más lento, se
   // quedaba sin disparar ni una vez en el encuentro.
-  const aTiempo = e.fightMs + shotReachMs(e) <= BOSS_MS
+  // Al que entró más tarde se le descuenta la espera, así los tres terminan en
+  // el mismo instante: si cada uno peleara BOSS_MS desde que llegó, el último
+  // seguiría bombardeando con los otros dos ya saliendo de pantalla.
+  const budget = BOSS_MS - (e.enterDelay || 0)
+  const aTiempo = e.fightMs + shotReachMs(e) <= budget
 
   // La carga es el aviso de que viene la andanada: si no va a haber andanada,
   // tampoco hay aviso. Si no, el rival se iluminaba y no salía nada.
@@ -415,7 +482,7 @@ export function updateEnemy(e, dt, targetY, guides = []) {
     })
   }
 
-  return { shots, done: e.fightMs >= BOSS_MS }
+  return { shots, done: e.fightMs >= budget }
 }
 
 // ─── BOLITAS GUÍA ─────────────────────────────────────────────────────────────
