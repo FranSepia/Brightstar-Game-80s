@@ -87,6 +87,25 @@ export const ENEMY_META = {
     jet: ['#ff4b2b', '#ffb37a'],
     footDy: 84,
     legs: [{ dx: -36, w: 40 }, { dx: 33, w: 31 }],
+    // El único de los tres que pelea volando, y la punta de la pirámide: se
+    // queda 130 px por encima de la línea del suelo, con los propulsores
+    // encendidos todo el encuentro.
+    //
+    // La altura no es a ojo. Los dos de la base tienen la cabeza en y=407, sus
+    // llamas bajan unos 16 px por debajo de los pies y entremedio todavía
+    // tiene que entrar su cartel, que mide 15. Con 130 los pies le quedan en
+    // 366, las llamas llegan a 382, el cartel va de 386 a 401 y sobran 6 px de
+    // aire antes de las cabezas de abajo. Con menos altura el cartel se
+    // apoyaba sobre la cabeza del pulpo.
+    //
+    // No es un adorno: los tres nombres juntos miden más de 215 px y los tres
+    // rivales ocupan un tramo de 114, así que los carteles no entran en una
+    // sola fila. Subiendo a este, su cartel sube con él y los otros dos quedan
+    // a la misma altura en el suelo. La separación la explica el personaje, en
+    // vez de ser una escalera puesta porque sí.
+    hover: 130,
+    // Llamas más largas que las de los que están apoyados, que sólo chispean.
+    jetLen: 3.2,
   },
   genlot: {
     // La etiqueta del arte dice 'GELLOT GENLOT' y el bicho lleva GG en la
@@ -94,6 +113,9 @@ export const ENEMY_META = {
     name: 'GELLOT GENLOT',
     label: 'COMPETENCIA',
     sub: 'GELLOT GENLOT',
+    // Partido en dos renglones para el cartel del suelo: de corrido mide 75 px
+    // y se choca con el de SCIENTIFIC GAMES, que está a 48 px de distancia.
+    tag: ['GELLOT', 'GENLOT'],
     src: asset('assets/retro/genlot.png'),
     shot: 'loto',
     volleyMs: 1850,
@@ -109,6 +131,7 @@ export const ENEMY_META = {
     name: 'SCIENTIFIC GAMES',
     label: 'COMPETENCIA',
     sub: 'SCIENTIFIC GAMES',
+    tag: ['SCIENTIFIC', 'GAMES'],
     src: asset('assets/retro/scigames.png'),
     shot: 'atom',
     volleyMs: 2150,
@@ -199,10 +222,16 @@ const easeOut = (t) => 1 - (1 - t) ** 3
 // x=318 (el borde) hay 188, así que van a escala 0.46 y pisándose 20 px entre
 // vecinos: 493*0.46 - 2*20 = 187. Con escalas más grandes el de la derecha se
 // cortaba contra el borde de la pantalla.
+//
+// Los tres van en pirámide: INTRALOT arriba, volando (ver su `hover`), y
+// justo en el medio de los otros dos, que son la base apoyada en el suelo.
+// Por eso el primer puesto está en x=266, que es el punto medio exacto entre
+// 242 y 290. Antes los tres estaban en fila (176, 242 y 290) y el de arriba
+// quedaba a un costado en vez de coronar al grupo.
 const LINEUP = {
   1: [{ x: HOME_X, scale: SCALE }],
   3: [
-    { x: 176, scale: 0.46 },
+    { x: 266, scale: 0.46 },   // la punta de la pirámide: el que vuela
     { x: 242, scale: 0.46 },
     { x: 290, scale: 0.46 },
   ],
@@ -249,12 +278,18 @@ export function createEncounter(ids, cycle = 0) {
 // Un letrero de neón con su nombre, apoyado en el suelo debajo de él, que se
 // queda mientras dure el encuentro.
 //
-// Van en renglones distintos a propósito. Los tres están plantados en x=176,
-// 242 y 290, o sea a 66 y 48 px uno de otro, y 'SCIENTIFIC GAMES' mide por sí
-// solo casi 100 px: puestos todos a la misma altura se taparían entre ellos.
-// Escalonados, cada uno queda bajo su dueño y se leen los tres.
-const SIGN_Y = FOOT_Y + 12
-const SIGN_ROW_H = 15
+// Cuelga de los pies de su dueño, así que la altura no la decide el cartel
+// sino el personaje: los dos que están apoyados en el suelo tienen el suyo a
+// la misma altura, y el que vuela se lleva el suyo 44 px más arriba. Así los
+// tres entran sin pisarse y sin la escalera que quedaba antes.
+//
+// El nombre va partido en renglones (ver `tag`) porque de corrido no entra:
+// entre el rival del medio y el de la derecha hay 48 px.
+// Cuánto queda de aire entre la planta de los pies y el techo del cartel. El
+// que vuela necesita más: sus llamas bajan unos 14 px y con el aire de los
+// otros le quedaban cruzadas por encima del cartel.
+const SIGN_GAP = 7
+const SIGN_GAP_FLY = 20
 
 // Devuelve dónde y cómo va el cartel, o null si este rival no lleva (los jefes
 // solos no: su nombre ya está en el cartel grande de arriba).
@@ -272,11 +307,11 @@ export function enemySign(e) {
   const meta = ENEMY_META[e.id]
   if (!meta.sub) return null
   return {
-    text: meta.sub,
+    lines: meta.tag || [meta.sub],
     color: meta.ink || meta.glow,
     homeX: e.homeX,
     offset: enemyPos(e).x - e.homeX,
-    y: SIGN_Y + (e.slot || 0) * SIGN_ROW_H,
+    y: FOOT_Y - (meta.hover || 0) + (meta.hover ? SIGN_GAP_FLY : SIGN_GAP),
     alpha: Math.max(0, 1 - e.slide),
   }
 }
@@ -289,12 +324,15 @@ function sizeK(e) {
 
 export function enemyPos(e) {
   // El centro se despeja desde la planta de los pies, que es lo que tiene que
-  // caer sobre la línea de la grilla.
-  const homeY = FOOT_Y - ENEMY_META[e.id].footDy * sizeK(e)
+  // caer sobre la línea de la grilla. Al que vuela se le descuenta además su
+  // altura de vuelo.
+  const homeY = FOOT_Y - ENEMY_META[e.id].footDy * sizeK(e) - (ENEMY_META[e.id].hover || 0)
   return {
     x: e.homeX + e.slide * (W + 150 - e.homeX),
-    // Apoyado en el suelo, así que apenas respira en lugar de flotar.
-    y: homeY + Math.sin(e.t / 540) * 3,
+    // El que vuela flota; el que está apoyado en el suelo apenas respira.
+    y: homeY + (ENEMY_META[e.id].hover
+      ? Math.sin(e.t / 420) * 5
+      : Math.sin(e.t / 540) * 3),
   }
 }
 
@@ -649,15 +687,19 @@ function drawJets(ctx, e, p) {
   const [hot, core] = meta.jet
   const k = sizeK(e)
   const baseY = p.y + meta.footDy * k - 2
+  // Al que vuela le sostienen el peso, así que van más encendidas; a los que
+  // están apoyados sólo les chispean.
+  const halo = meta.hover ? 0.6 : 0.35
+  const flame = meta.hover ? 0.95 : 0.75
 
   ctx.save()
   for (const leg of meta.legs) {
     const flick = 0.6 + Math.sin(e.t / 42 + leg.dx) * 0.4
-    const len = 10 * k * flick
+    const len = 10 * k * flick * (meta.jetLen || 1)
     const x = p.x + leg.dx * k
     const half = (leg.w * k) / 2
 
-    ctx.globalAlpha = 0.35
+    ctx.globalAlpha = halo
     ctx.fillStyle = hot
     ctx.beginPath()
     ctx.moveTo(x - half, baseY)
@@ -666,7 +708,7 @@ function drawJets(ctx, e, p) {
     ctx.closePath()
     ctx.fill()
 
-    ctx.globalAlpha = 0.75
+    ctx.globalAlpha = flame
     ctx.fillStyle = core
     ctx.beginPath()
     ctx.moveTo(x - half * 0.45, baseY)

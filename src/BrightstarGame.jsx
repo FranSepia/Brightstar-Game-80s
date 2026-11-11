@@ -833,38 +833,75 @@ function drawSignPlate(ctx, x, y, w, h, color) {
   ctx.restore()
 }
 
+// Medidas del cartel. La letra es de 5 px y no de 6 para que los dos rivales
+// del suelo, que están a 48 px uno de otro, no se choquen los carteles: a 6 px
+// 'SCIENTIFIC' sola ya se lleva 58 px de ancho.
+const SIGN_SIZE = 5
+const SIGN_LINE = 7
+const SIGN_PAD_X = 5
+const SIGN_PAD_Y = 4
+const SIGN_SEP = 3        // aire mínimo entre dos carteles del mismo renglón
+
 // Los carteles de los tres rivales. El texto no pasa por neonText(): con una
-// letra de 6 px su contorno oscuro (3 px de grosor mínimo) la empasta hasta no
-// leerse. Acá el realce es solo el resplandor del propio color.
+// letra tan chica su contorno oscuro (3 px de grosor mínimo) la empasta hasta
+// no leerse. Acá el realce es solo el resplandor del propio color.
+//
+// Se miden todos primero y recién después se dibujan, porque los que comparten
+// renglón hay que separarlos: centrado cada uno bajo su dueño, el de GELLOT
+// GENLOT y el de SCIENTIFIC GAMES se pisaban 19 px. El reparto empuja hacia la
+// izquierda, que es donde hay lugar libre desde que INTRALOT pelea volando.
 function drawEnemySigns(ctx, enemies) {
+  const plates = []
   enemies.forEach(e => {
     const sign = enemySign(e)
     if (!sign || sign.alpha <= 0) return
 
-    const size = 6
-    const h = 13
     ctx.save()
-    ctx.font = `${size}px ${FONT}`
-    const w = Math.ceil(ctx.measureText(sign.text).width) + 12
+    ctx.font = `${SIGN_SIZE}px ${FONT}`
+    const textW = Math.max(...sign.lines.map(t => ctx.measureText(t).width))
     ctx.restore()
 
-    // El sitio donde queda parado va centrado bajo su dueño, pero recortado
-    // contra los bordes: SCIENTIFIC GAMES mide casi 100 px y le toca el rival
-    // más pegado al borde derecho. El corrimiento de la entrada y la salida se
-    // suma DESPUÉS del recorte, así el cartel viaja con el rival en vez de
-    // quedarse clavado en el borde mientras él todavía viene llegando.
-    const restX = Math.max(3, Math.min(W - w - 3, sign.homeX - w / 2))
-    const x = restX + sign.offset
+    const w = Math.ceil(textW) + SIGN_PAD_X * 2
+    const h = SIGN_PAD_Y * 2 + sign.lines.length * SIGN_LINE
+    // Centrado bajo su dueño y sin pasarse de los bordes. El corrimiento de la
+    // entrada y la salida se suma al final, DESPUÉS de recortar y repartir:
+    // así el cartel viaja con el rival en vez de quedarse clavado en el borde
+    // mientras él todavía viene llegando.
+    plates.push({ sign, w, h, x: Math.max(3, Math.min(W - w - 3, sign.homeX - w / 2)) })
+  })
 
+  // Reparto por renglón. Se recorre de derecha a izquierda: el de más a la
+  // derecha es el que está contra el borde y no tiene a dónde correrse, así
+  // que manda él y los demás le hacen lugar.
+  const filas = new Map()
+  plates.forEach(p => {
+    const clave = Math.round(p.sign.y)
+    if (!filas.has(clave)) filas.set(clave, [])
+    filas.get(clave).push(p)
+  })
+  filas.forEach(fila => {
+    fila.sort((a, b) => a.x - b.x)
+    for (let i = fila.length - 2; i >= 0; i--) {
+      const tope = fila[i + 1].x - SIGN_SEP - fila[i].w
+      if (fila[i].x > tope) fila[i].x = tope
+    }
+    // Si al correrlos alguno se salió por la izquierda, vuelven todos juntos.
+    const sobra = 3 - fila[0].x
+    if (sobra > 0) fila.forEach(p => { p.x += sobra })
+  })
+
+  plates.forEach(({ sign, w, h, x }) => {
     ctx.save()
     ctx.globalAlpha = sign.alpha
-    drawSignPlate(ctx, x, sign.y, w, h, sign.color)
-    ctx.font = `${size}px ${FONT}`
+    drawSignPlate(ctx, x + sign.offset, sign.y, w, h, sign.color)
+    ctx.font = `${SIGN_SIZE}px ${FONT}`
     ctx.textAlign = 'center'
     ctx.shadowColor = sign.color
     ctx.shadowBlur = 5
     ctx.fillStyle = sign.color
-    ctx.fillText(sign.text, x + w / 2, sign.y + 9)
+    sign.lines.forEach((t, i) => {
+      ctx.fillText(t, x + sign.offset + w / 2, sign.y + SIGN_PAD_Y + SIGN_SIZE + i * SIGN_LINE)
+    })
     ctx.restore()
   })
 }
