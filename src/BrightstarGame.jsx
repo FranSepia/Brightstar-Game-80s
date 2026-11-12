@@ -1146,6 +1146,68 @@ function drawLeaderboard(ctx, playerName) {
   ctx.restore()
 }
 
+// ─── CRÉDITO AL PIE ───────────────────────────────────────────────────────────
+// Va abajo del todo en la pantalla de inicio y lleva al sitio de Y&iF.
+//
+// Se dibuja en el canvas y no como un <a> de HTML encima, para seguir el mismo
+// patrón que el resto del menú: la fila de personajes y el nombre del jugador
+// ya son canvas + zona de toque, resuelta en tappedUI(). Eso además lo deja
+// imposible de pulsar sin querer mientras jugás, porque tappedUI() no mira
+// nada si la pantalla de inicio no está puesta. Un elemento de HTML encima del
+// canvas habría que acordarse de esconderlo al empezar la partida, y un toque
+// en medio del juego te sacaría del sitio.
+//
+// El corazón se dibuja aparte y un poco más grande: es un emoji, así que no
+// sale de la tipografía del juego sino de la del sistema, y a 7 px queda
+// diminuto al lado de las letras.
+const CREDIT_URL = 'https://www.why-and-if.solutions/'
+const CREDIT_ANTES = 'Creado con '
+const CREDIT_CORAZON = '❤️'
+const CREDIT_DESPUES = ' por Y&iF'
+const CREDIT_SIZE = 7
+const CREDIT_CORAZON_SIZE = 9
+const CREDIT_Y = 540        // techo de la chapa; el borde de abajo está en 568
+const CREDIT_H = 18
+const CREDIT_PAD_X = 10
+
+// Dibuja el crédito y devuelve su rectángulo, que es lo que después usa
+// tappedUI() para saber si le pegaste. Se devuelve en vez de calcularse en dos
+// lados porque el ancho sale de medir el texto, y el del corazón depende de
+// qué emoji ponga cada sistema: la única medida que no miente es esta.
+function drawCredit(ctx) {
+  ctx.save()
+  ctx.textAlign = 'left'
+
+  ctx.font = `${CREDIT_SIZE}px ${FONT}`
+  const wAntes = ctx.measureText(CREDIT_ANTES).width
+  const wDespues = ctx.measureText(CREDIT_DESPUES).width
+  ctx.font = `${CREDIT_CORAZON_SIZE}px ${FONT}`
+  const wCorazon = ctx.measureText(CREDIT_CORAZON).width
+
+  const texto = wAntes + wCorazon + wDespues
+  const w = texto + CREDIT_PAD_X * 2
+  const x = Math.round((W - w) / 2)
+  const x0 = Math.round((W - texto) / 2)
+  const base = CREDIT_Y + 12
+
+  // Chapa oscura detrás: la grilla del suelo es un enredo de líneas y sin algo
+  // atrás el texto de 7 px no se lee. De paso se nota que es pulsable.
+  drawPanel(ctx, x, CREDIT_Y, w, CREDIT_H, 5)
+
+  ctx.shadowColor = '#c04dff'
+  ctx.shadowBlur = 6
+  ctx.fillStyle = '#ffffff'
+  ctx.font = `${CREDIT_SIZE}px ${FONT}`
+  ctx.fillText(CREDIT_ANTES, x0, base)
+  ctx.font = `${CREDIT_CORAZON_SIZE}px ${FONT}`
+  ctx.fillText(CREDIT_CORAZON, x0 + wAntes, base)
+  ctx.font = `${CREDIT_SIZE}px ${FONT}`
+  ctx.fillText(CREDIT_DESPUES, x0 + wAntes + wCorazon, base)
+
+  ctx.restore()
+  return { x, y: CREDIT_Y, w, h: CREDIT_H }
+}
+
 function drawStartScreen(ctx, flashAlpha, character, imgs, playerName) {
   neonText(ctx, 'BRIGHTSTAR', W / 2, 70, 24, '#ffe44e', '#ff8c1a')
   neonText(ctx, 'GAME', W / 2, 110, 32, '#ffffff', '#ff3cac')
@@ -1243,6 +1305,10 @@ export default function BrightstarGame() {
   const rafRef = useRef(null)
   const lastTimeRef = useRef(null)
   const pipeTimerRef = useRef(0)
+  // Dónde quedó el crédito del pie la última vez que se dibujó. Lo llena
+  // drawCredit() y lo lee tappedUI(): el ancho depende de medir el texto, que
+  // sólo se puede hacer al dibujar.
+  const creditRectRef = useRef(null)
 
   const [playerName, setName] = useState(() => getPlayerName())
   const [editingName, setEditingName] = useState(false)
@@ -1421,6 +1487,12 @@ export default function BrightstarGame() {
       const id = selHitTest(lx, ly)
       if (id) {
         pickCharacter(id)
+        return true
+      }
+      // El crédito del pie: se va al sitio de Y&iF. Devuelve true igual que los
+      // demás para que el toque no cuente también como "empezar a jugar".
+      if (creditRectRef.current && inRect(creditRectRef.current, lx, ly)) {
+        window.location.href = CREDIT_URL
         return true
       }
       return false
@@ -1812,6 +1884,7 @@ export default function BrightstarGame() {
         renderChar(ctx, BIRD_X, floatY, 0)
         ctx.restore()
         drawStartScreen(ctx, s.flashAlpha, s.character, imgs, nameRef.current)
+        creditRectRef.current = drawCredit(ctx)
       } else {
         if (!s.isHidden && s.phase !== 'pipe_enter') {
           renderChar(ctx, BIRD_X, s.birdY, Math.min(Math.max(s.birdVel, -5), 5))
